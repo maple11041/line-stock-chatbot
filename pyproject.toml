@@ -10,6 +10,7 @@ dependencies = [
 
 [project.scripts]
 line-stock-chatbot = "line_stock_chatbot.cli:main"
+line-stock-forecast = "line_stock_chatbot.forecast_cli:main"
 line-webhook-debug = "line_stock_chatbot.webhook_debug:main"
 
 [dependency-groups]

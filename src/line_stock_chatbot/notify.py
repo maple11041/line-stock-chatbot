@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from .forecast import calculate_underwriting_lots, calculate_winning_rate
 from .twse import PublicOffering
+from .wespai import SubscriptionSnapshot
 
 
 @dataclass(frozen=True)
@@ -11,6 +13,7 @@ class DailyDigest:
     target_date: date
     draw_today: list[PublicOffering]
     open_today: list[PublicOffering]
+    snapshots: dict[str, SubscriptionSnapshot]
 
     @property
     def has_items(self) -> bool:
@@ -21,6 +24,7 @@ def build_daily_digest(
     offerings: list[PublicOffering],
     target_date: date,
     *,
+    snapshots: dict[str, SubscriptionSnapshot] | None = None,
     include_bonds: bool = False,
     include_cancelled: bool = False,
 ) -> DailyDigest:
@@ -44,7 +48,12 @@ def build_daily_digest(
         ],
         key=lambda item: (item.subscribe_end or date.max, item.code, item.name),
     )
-    return DailyDigest(target_date=target_date, draw_today=draw_today, open_today=open_today)
+    return DailyDigest(
+        target_date=target_date,
+        draw_today=draw_today,
+        open_today=open_today,
+        snapshots=snapshots or {},
+    )
 
 
 def format_digest(digest: DailyDigest) -> str:
@@ -60,28 +69,45 @@ def format_digest(digest: DailyDigest) -> str:
         lines.append("")
         lines.append(f"今日抽籤（{len(digest.draw_today)} 檔）")
         for item in digest.draw_today:
-            lines.extend(_format_item(item))
+            lines.extend(_format_item(item, digest.snapshots))
 
     if digest.open_today:
         lines.append("")
         lines.append(f"今日可申購（{len(digest.open_today)} 檔）")
         for item in digest.open_today:
-            lines.extend(_format_item(item))
+            lines.extend(_format_item(item, digest.snapshots))
 
     lines.append("")
-    lines.append("資料來源：臺灣證券交易所公開申購公告")
+    lines.append("動態即時中籤率為目前累積筆數估算值，實際結果以證交所公告為準。")
+    lines.append("資料來源：臺灣證券交易所公開申購公告、撿股讚申購彙整")
     return "\n".join(lines)
 
 
-def _format_item(item: PublicOffering) -> list[str]:
+def _format_item(
+    item: PublicOffering,
+    snapshots: dict[str, SubscriptionSnapshot],
+) -> list[str]:
     price = _prefer_actual(item.actual_underwriting_price, item.underwriting_price)
-    return [
+    lines = [
         f"- {item.code} {item.name}（{item.market}）",
         f"  承銷價：{price} 元；申購股數：{item.subscription_shares or '未提供'}",
         f"  申購期間：{_format_date(item.subscribe_start)} - {_format_date(item.subscribe_end)}",
         f"  抽籤：{_format_date(item.draw_date)}；撥券/上市櫃：{_format_date(item.listing_date)}",
-        f"  中籤率：{_format_rate(item.winning_rate)}；主辦券商：{item.broker or '未提供'}",
+        f"  官方中籤率：{_format_rate(item.winning_rate)}；主辦券商：{item.broker or '未提供'}",
     ]
+    snapshot = snapshots.get(item.code)
+    if snapshot and snapshot.application_count > 0:
+        rate = calculate_winning_rate(
+            calculate_underwriting_lots(item),
+            snapshot.application_count,
+        )
+        lines.append(
+            f"  申購總筆數：{snapshot.application_count:,} 筆；動態即時中籤率：{rate:.2f}%"
+        )
+    else:
+        lines.append("  申購總筆數：尚未有累積資料")
+
+    return lines
 
 
 def _prefer_actual(actual: str, original: str) -> str:
@@ -122,4 +148,3 @@ def split_message(text: str, *, max_chars: int = 4500) -> list[str]:
         chunks.append("\n".join(current))
 
     return chunks
-

@@ -3,8 +3,9 @@
 這個專案每天抓取臺灣證券交易所「公開申購公告-抽籤日程表」，整理成 LINE 訊息，推播到指定家族 LINE 群組。預設通知：
 
 - 今日抽籤案件
-- 今日仍可申購案件
+- 今日仍可申購案件，以及目前累積筆數估算的動態即時中籤率
 - 排除中央登錄公債，只保留台股相關公開申購
+- 申購截止日晚間 20:30 發送預估中籤率賽況
 
 ## 環境需求
 
@@ -30,6 +31,12 @@ uv run line-stock-chatbot --date 2026-06-05 --dry-run
 
 ```bash
 uv run line-stock-chatbot --include-bonds --dry-run
+```
+
+指定日期測試晚間賽況預報：
+
+```bash
+uv run line-stock-forecast --date 2026-05-29 --dry-run
 ```
 
 ## LINE 設定
@@ -82,14 +89,45 @@ LINE_CHANNEL_ACCESS_TOKEN=xxx LINE_TO_ID=yyy uv run line-stock-chatbot
 
 ## GitHub Actions 部署
 
-已建立 `.github/workflows/daily-line-notify.yml`，每天台北時間 07:30 執行一次。
+已建立兩個 workflow：
+
+- `.github/workflows/daily-line-notify.yml`：每天台北時間 08:30 發送每日摘要
+- `.github/workflows/evening-line-forecast.yml`：每天台北時間 20:30 發送申購截止賽況
 
 請到 GitHub repo 的 `Settings > Secrets and variables > Actions` 新增：
 
 - `LINE_CHANNEL_ACCESS_TOKEN`
 - `LINE_TO_ID`
 
-也可以手動從 Actions 頁面執行 `Daily LINE stock subscription notify` workflow。手動執行時，即使當天沒有案件，也會推播一則訊息供測試；每日排程則只在有案件時推播。
+也可以手動從 Actions 頁面執行 workflow。手動執行時，即使當天沒有案件，也會推播一則訊息供測試；每日排程則只在有案件時推播。
+
+## 晚間賽況預報
+
+每天台北時間 20:30，機器人會找出當天截止申購且申購總筆數大於 0 的股票，發送預估中籤率。
+
+計算方式：
+
+```text
+承銷張數 = 實際承銷股數 / 1,000
+預估中籤率 = 承銷張數 / 申購總筆數 * 100%
+```
+
+TWSE 公開申購表的截止日晚間申購筆數尚未更新，因此預報使用：
+
+- TWSE 公開申購公告：申購日程、實際承銷股數
+- 撿股讚公開彙整頁：截止日晚間申購總筆數
+
+預報是參考值，實際中籤率以 TWSE 後續公告為準。
+
+## 動態即時中籤率
+
+每天台北時間 08:30 的摘要會一併讀取目前公開彙整的申購總筆數。當累積筆數大於 0 時，訊息會顯示動態即時中籤率：
+
+```text
+動態即時中籤率 = 承銷張數 / 目前累積申購總筆數 * 100%
+```
+
+申購總筆數會持續累積，因此這個數字會隨申購進度變動。實際中籤率仍以 TWSE 後續公告為準。
 
 ## 可用環境變數
 
@@ -103,3 +141,7 @@ LINE_CHANNEL_ACCESS_TOKEN=xxx LINE_TO_ID=yyy uv run line-stock-chatbot
 臺灣證券交易所公開申購公告：
 
 `https://www.twse.com.tw/announcement/publicForm?response=json&yy=2026`
+
+撿股讚公開申購彙整：
+
+`https://stock.wespai.com/draw`

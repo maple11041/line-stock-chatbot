@@ -1,13 +1,13 @@
-name: Daily LINE stock subscription notify
+name: Evening LINE stock subscription forecast
 
 on:
   schedule:
-    # 08:30 Asia/Taipei every day. GitHub Actions cron uses UTC.
-    - cron: "30 0 * * *"
+    # 20:30 Asia/Taipei every day. GitHub Actions cron uses UTC.
+    - cron: "30 12 * * *"
   workflow_dispatch:
 
 jobs:
-  notify:
+  forecast:
     runs-on: ubuntu-latest
     env:
       TZ: Asia/Taipei
@@ -15,7 +15,6 @@ jobs:
       LINE_TO_ID: ${{ secrets.LINE_TO_ID }}
       # Manual runs double as a LINE connectivity check.
       SEND_EMPTY: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
-      INCLUDE_BONDS: "false"
 
     steps:
       - uses: actions/checkout@v4
@@ -27,5 +26,6 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --frozen
-      - name: Send LINE notification
-        run: uv run line-stock-chatbot
+      - name: Send LINE forecast
+        run: uv run line-stock-forecast
+
