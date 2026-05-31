@@ -89,7 +89,7 @@ LINE_CHANNEL_ACCESS_TOKEN=xxx LINE_TO_ID=yyy uv run line-stock-chatbot
 - `LINE_CHANNEL_ACCESS_TOKEN`
 - `LINE_TO_ID`
 
-也可以手動從 Actions 頁面執行 `Daily LINE stock subscription notify` workflow。
+也可以手動從 Actions 頁面執行 `Daily LINE stock subscription notify` workflow。手動執行時，即使當天沒有案件，也會推播一則訊息供測試；每日排程則只在有案件時推播。
 
 ## 可用環境變數
 
