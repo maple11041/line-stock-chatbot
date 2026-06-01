@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from .forecast import calculate_underwriting_lots, calculate_winning_rate
 from .twse import PublicOffering
@@ -11,13 +12,12 @@ from .wespai import SubscriptionSnapshot
 @dataclass(frozen=True)
 class DailyDigest:
     target_date: date
-    draw_today: list[PublicOffering]
     open_today: list[PublicOffering]
     snapshots: dict[str, SubscriptionSnapshot]
 
     @property
     def has_items(self) -> bool:
-        return bool(self.draw_today or self.open_today)
+        return bool(self.open_today)
 
 
 def build_daily_digest(
@@ -28,16 +28,13 @@ def build_daily_digest(
     include_bonds: bool = False,
     include_cancelled: bool = False,
 ) -> DailyDigest:
+    live_snapshots = snapshots or {}
     filtered = [
         item
         for item in offerings
         if (include_bonds or not item.is_bond) and (include_cancelled or not item.is_cancelled)
     ]
 
-    draw_today = sorted(
-        [item for item in filtered if item.draw_date == target_date],
-        key=lambda item: (item.code, item.name),
-    )
     open_today = sorted(
         [
             item
@@ -45,14 +42,14 @@ def build_daily_digest(
             if item.subscribe_start
             and item.subscribe_end
             and item.subscribe_start <= target_date <= item.subscribe_end
+            and _premium_rate(item, live_snapshots.get(item.code)) > Decimal("20")
         ],
         key=lambda item: (item.subscribe_end or date.max, item.code, item.name),
     )
     return DailyDigest(
         target_date=target_date,
-        draw_today=draw_today,
         open_today=open_today,
-        snapshots=snapshots or {},
+        snapshots=live_snapshots,
     )
 
 
@@ -62,23 +59,18 @@ def format_digest(digest: DailyDigest) -> str:
 
     if not digest.has_items:
         lines.append("")
-        lines.append("今天沒有台股公開申購或抽籤案件。")
+        lines.append("今天沒有申購期間內且溢價率大於 20% 的台股抽籤案件。")
         return "\n".join(lines)
-
-    if digest.draw_today:
-        lines.append("")
-        lines.append(f"今日抽籤（{len(digest.draw_today)} 檔）")
-        for item in digest.draw_today:
-            lines.extend(_format_item(item, digest.snapshots))
 
     if digest.open_today:
         lines.append("")
-        lines.append(f"今日可申購（{len(digest.open_today)} 檔）")
+        lines.append(f"今日可申購且溢價率大於 20%（{len(digest.open_today)} 檔）")
         for item in digest.open_today:
             lines.extend(_format_item(item, digest.snapshots))
 
     lines.append("")
-    lines.append("動態即時中籤率為目前累積筆數估算值，實際結果以證交所公告為準。")
+    lines.append("溢價率以最新收盤價估算；動態即時中籤率以目前累積筆數估算。")
+    lines.append("以上為參考值，實際結果以證交所公告為準。")
     lines.append("資料來源：臺灣證券交易所公開申購公告、撿股讚申購彙整")
     return "\n".join(lines)
 
@@ -88,14 +80,16 @@ def _format_item(
     snapshots: dict[str, SubscriptionSnapshot],
 ) -> list[str]:
     price = _prefer_actual(item.actual_underwriting_price, item.underwriting_price)
+    snapshot = snapshots.get(item.code)
+    premium_rate = _premium_rate(item, snapshot)
     lines = [
         f"- {item.code} {item.name}（{item.market}）",
         f"  承銷價：{price} 元；申購股數：{item.subscription_shares or '未提供'}",
+        f"  最新收盤價：{snapshot.market_price if snapshot else '未提供'} 元；"
+        f"溢價率：{premium_rate:.2f}%",
         f"  申購期間：{_format_date(item.subscribe_start)} - {_format_date(item.subscribe_end)}",
         f"  抽籤：{_format_date(item.draw_date)}；撥券/上市櫃：{_format_date(item.listing_date)}",
-        f"  官方中籤率：{_format_rate(item.winning_rate)}；主辦券商：{item.broker or '未提供'}",
     ]
-    snapshot = snapshots.get(item.code)
     if snapshot and snapshot.application_count > 0:
         rate = calculate_winning_rate(
             calculate_underwriting_lots(item),
@@ -116,14 +110,28 @@ def _prefer_actual(actual: str, original: str) -> str:
     return original or "未訂出"
 
 
+def _premium_rate(item: PublicOffering, snapshot: SubscriptionSnapshot | None) -> Decimal:
+    underwriting_price = _parse_decimal(
+        _prefer_actual(
+            item.actual_underwriting_price,
+            item.underwriting_price,
+        )
+    )
+    if not snapshot or snapshot.market_price is None or underwriting_price <= 0:
+        return Decimal("0")
+
+    return (snapshot.market_price - underwriting_price) / underwriting_price * Decimal("100")
+
+
+def _parse_decimal(value: str) -> Decimal:
+    try:
+        return Decimal(value.replace(",", "").strip())
+    except InvalidOperation:
+        return Decimal("0")
+
+
 def _format_date(value: date | None) -> str:
     return value.strftime("%Y/%m/%d") if value else "未訂出"
-
-
-def _format_rate(value: str) -> str:
-    if not value:
-        return "未提供"
-    return value if value.endswith("%") else f"{value}%"
 
 
 def split_message(text: str, *, max_chars: int = 4500) -> list[str]:

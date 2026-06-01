@@ -13,8 +13,8 @@ jobs:
       TZ: Asia/Taipei
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
       LINE_TO_ID: ${{ secrets.LINE_TO_ID }}
-      # Manual runs double as a LINE connectivity check.
-      SEND_EMPTY: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+      # Always report successful execution, even when no stocks match the filter.
+      SEND_EMPTY: "true"
       INCLUDE_BONDS: "false"
 
     steps:

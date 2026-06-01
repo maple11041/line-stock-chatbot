@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 
 import requests
@@ -13,6 +14,7 @@ class SubscriptionSnapshot:
     code: str
     name: str
     application_count: int
+    market_price: Decimal | None = None
 
 
 def fetch_subscription_snapshots(
@@ -41,13 +43,14 @@ def parse_subscription_snapshots(html: str) -> dict[str, SubscriptionSnapshot]:
     try:
         code_index = parser.headers.index("代號")
         name_index = parser.headers.index("公司")
+        price_index = parser.headers.index("收盤價")
         count_index = parser.headers.index("總合格件")
     except ValueError as exc:
         raise RuntimeError("Wespai draw table is missing expected columns") from exc
 
     snapshots: dict[str, SubscriptionSnapshot] = {}
     for row in parser.rows:
-        if len(row) <= max(code_index, name_index, count_index):
+        if len(row) <= max(code_index, name_index, price_index, count_index):
             continue
 
         code = row[code_index]
@@ -58,6 +61,7 @@ def parse_subscription_snapshots(html: str) -> dict[str, SubscriptionSnapshot]:
             code=code,
             name=row[name_index],
             application_count=_parse_int(row[count_index]),
+            market_price=_parse_decimal(row[price_index]),
         )
 
     return snapshots
@@ -66,6 +70,13 @@ def parse_subscription_snapshots(html: str) -> dict[str, SubscriptionSnapshot]:
 def _parse_int(value: str) -> int:
     normalized = value.strip().replace(",", "")
     return int(normalized) if normalized else 0
+
+
+def _parse_decimal(value: str) -> Decimal | None:
+    try:
+        return Decimal(value.strip().replace(",", ""))
+    except InvalidOperation:
+        return None
 
 
 class _DrawTableParser(HTMLParser):
@@ -114,4 +125,3 @@ class _DrawTableParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self.in_cell:
             self.cell_parts.append(data)
-

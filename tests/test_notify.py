@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from line_stock_chatbot.notify import build_daily_digest, format_digest, split_message
 from line_stock_chatbot.twse import PublicOffering
@@ -23,8 +24,16 @@ def test_build_daily_digest_excludes_bonds_by_default() -> None:
         subscribe_start=date(2026, 6, 1),
         subscribe_end=date(2026, 6, 5),
     )
+    snapshots = {
+        "7839": SubscriptionSnapshot(
+            code="7839",
+            name="達人網",
+            application_count=0,
+            market_price=Decimal("66.5"),
+        )
+    }
 
-    digest = build_daily_digest([stock, bond], target)
+    digest = build_daily_digest([stock, bond], target, snapshots=snapshots)
 
     assert digest.open_today == [stock]
 
@@ -35,16 +44,24 @@ def test_format_digest_includes_daily_sections() -> None:
         code="7839",
         name="達人網",
         market="初上櫃",
-        draw_date=target,
+        draw_date=date(2026, 6, 9),
         subscribe_start=date(2026, 6, 3),
         subscribe_end=target,
     )
+    snapshots = {
+        "7839": SubscriptionSnapshot(
+            code="7839",
+            name="達人網",
+            application_count=0,
+            market_price=Decimal("66.5"),
+        )
+    }
 
-    text = format_digest(build_daily_digest([stock], target))
+    text = format_digest(build_daily_digest([stock], target, snapshots=snapshots))
 
-    assert "今日抽籤" in text
-    assert "今日可申購" in text
+    assert "今日可申購且溢價率大於 20%" in text
     assert "7839 達人網" in text
+    assert "溢價率：84.72%" in text
 
 
 def test_format_digest_includes_dynamic_live_winning_rate() -> None:
@@ -59,7 +76,12 @@ def test_format_digest_includes_dynamic_live_winning_rate() -> None:
         underwriting_shares="1,020,000",
     )
     snapshots = {
-        "8033": SubscriptionSnapshot(code="8033", name="雷虎", application_count=162_091)
+        "8033": SubscriptionSnapshot(
+            code="8033",
+            name="雷虎",
+            application_count=162_091,
+            market_price=Decimal("143"),
+        )
     }
 
     text = format_digest(build_daily_digest([stock], target, snapshots=snapshots))
@@ -78,10 +100,57 @@ def test_format_digest_marks_missing_application_counts() -> None:
         subscribe_start=date(2026, 6, 3),
         subscribe_end=target,
     )
+    snapshots = {
+        "7839": SubscriptionSnapshot(
+            code="7839",
+            name="達人網",
+            application_count=0,
+            market_price=Decimal("66.5"),
+        )
+    }
 
-    text = format_digest(build_daily_digest([stock], target))
+    text = format_digest(build_daily_digest([stock], target, snapshots=snapshots))
 
     assert "申購總筆數：尚未有累積資料" in text
+
+
+def test_digest_excludes_drawn_and_low_premium_stocks() -> None:
+    target = date(2026, 6, 1)
+    drawn = _offering(
+        code="6945",
+        name="圓祥生技",
+        market="初上櫃",
+        draw_date=target,
+        subscribe_start=date(2026, 5, 26),
+        subscribe_end=date(2026, 5, 28),
+    )
+    low_premium = _offering(
+        code="1234",
+        name="測試公司",
+        market="上市增資",
+        draw_date=date(2026, 6, 5),
+        subscribe_start=target,
+        subscribe_end=date(2026, 6, 3),
+    )
+    snapshots = {
+        "6945": SubscriptionSnapshot(
+            code="6945",
+            name="圓祥生技",
+            application_count=88_222,
+            market_price=Decimal("200"),
+        ),
+        "1234": SubscriptionSnapshot(
+            code="1234",
+            name="測試公司",
+            application_count=10,
+            market_price=Decimal("40"),
+        ),
+    }
+
+    digest = build_daily_digest([drawn, low_premium], target, snapshots=snapshots)
+
+    assert not digest.has_items
+    assert "今天沒有申購期間內且溢價率大於 20%" in format_digest(digest)
 
 
 def test_split_message_respects_max_chars() -> None:
