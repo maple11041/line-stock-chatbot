@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from time import sleep
 from typing import Any
 
 import requests
 
-TWSE_PUBLIC_FORM_URL = "https://www.twse.com.tw/announcement/publicForm"
+TWSE_PUBLIC_FORM_URLS = (
+    "https://www.twse.com.tw/rwd/zh/announcement/publicForm",
+    "https://www.twse.com.tw/announcement/publicForm",
+)
 
 
 def parse_roc_date(value: str | None) -> date | None:
@@ -85,18 +89,43 @@ def fetch_public_offerings(
     *,
     timeout: float = 20,
     session: requests.Session | None = None,
+    attempts: int = 3,
+    retry_delay: float = 2,
 ) -> list[PublicOffering]:
     """Fetch TWSE public subscription entries for a Gregorian year."""
     http = session or requests.Session()
-    response = http.get(
-        TWSE_PUBLIC_FORM_URL,
-        params={"response": "json", "yy": str(year)},
-        timeout=timeout,
-        headers={"User-Agent": "line-stock-chatbot/0.1"},
-    )
-    response.raise_for_status()
-    payload: dict[str, Any] = response.json()
+    errors: list[str] = []
 
+    for attempt in range(attempts):
+        for url in TWSE_PUBLIC_FORM_URLS:
+            response: requests.Response | None = None
+            try:
+                response = http.get(
+                    url,
+                    params={"response": "json", "yy": str(year)},
+                    timeout=timeout,
+                    headers={
+                        "Accept": "application/json, text/plain, */*",
+                        "Referer": "https://www.twse.com.tw/",
+                        "User-Agent": "line-stock-chatbot/0.1",
+                    },
+                )
+                response.raise_for_status()
+                payload: dict[str, Any] = response.json()
+                return _parse_public_offerings_payload(payload)
+            except (requests.RequestException, RuntimeError, ValueError) as exc:
+                errors.append(_describe_fetch_error(url, response, exc))
+
+        if attempt < attempts - 1 and retry_delay > 0:
+            sleep(retry_delay * (attempt + 1))
+
+    details = " | ".join(errors[-4:])
+    raise RuntimeError(f"Unable to fetch valid TWSE public offering JSON after retries: {details}")
+
+
+def _parse_public_offerings_payload(payload: dict[str, Any]) -> list[PublicOffering]:
+    if not isinstance(payload, dict):
+        raise RuntimeError("TWSE JSON response is not an object")
     if payload.get("stat") != "OK":
         raise RuntimeError(f"TWSE returned non-OK status: {payload.get('stat')!r}")
 
@@ -107,3 +136,18 @@ def fetch_public_offerings(
 
     return [PublicOffering.from_twse_row(fields, row) for row in rows]
 
+
+def _describe_fetch_error(
+    url: str,
+    response: requests.Response | None,
+    error: Exception,
+) -> str:
+    if response is None:
+        return f"{url}: {type(error).__name__}: {error}"
+
+    content_type = response.headers.get("Content-Type", "unknown")
+    preview = response.text[:120].replace("\n", " ").replace("\r", " ")
+    return (
+        f"{url}: {type(error).__name__}: {error}; "
+        f"status={response.status_code}; content-type={content_type}; body={preview!r}"
+    )
